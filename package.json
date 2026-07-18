@@ -1,0 +1,17 @@
+{
+  "name": "stremio-tr-subs",
+  "version": "1.0.0",
+  "description": "Ingilizce altyaziyi DeepL ile Turkce'ye ceviren Stremio addon'u",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "stremio-addon-sdk": "^1.6.10",
+    "express": "^4.19.2",
+    "node-fetch": "^2.7.0",
+    "deepl-node": "^1.13.0",
+    "subtitle": "^4.2.1",
+    "dotenv": "^16.4.5"
+  }
+}
