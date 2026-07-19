@@ -10,7 +10,7 @@ const { parseSync, stringifySync } = require('subtitle');
 
 const DEEPL_API_KEY = process.env.DEEPL_API_KEY;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-flash-latest';
 const PORT = process.env.PORT || 7000;
 const PUBLIC_URL = process.env.PUBLIC_URL || `http://127.0.0.1:${PORT}`;
 const CACHE_DIR = path.join(__dirname, 'cache');
