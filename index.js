@@ -105,6 +105,7 @@ const manifest = {
   version: '2.0.0',
   name: 'TR Altyazi (AI Ceviri)',
   description: 'Ingilizce altyaziyi DeepL ve/veya Gemini yapay zekasi ile otomatik olarak Turkceye cevirir',
+  logo: `${PUBLIC_URL}/logo.png`,
   resources: ['subtitles'],
   types: ['movie', 'series'],
   idPrefixes: ['tt'],
@@ -206,9 +207,11 @@ builder.defineSubtitlesHandler(async ({ type, id }) => {
 const app = express();
 app.use(getRouter(builder.getInterface()));
 app.use('/subs', express.static(CACHE_DIR));
+app.use(express.static(path.join(__dirname, 'public')));
 
 app.listen(PORT, () => {
   console.log(`Addon calisiyor: ${PUBLIC_URL}/manifest.json`);
   console.log(`Aktif ceviri motorlari: ${ENGINES.map(e => e.key).join(', ') || 'YOK - key eklenmemis'}`);
+  if (GEMINI_API_KEY) console.log(`Kullanilan Gemini modeli: ${GEMINI_MODEL}`);
   console.log('Bu adresi Stremio > Addonlar > "Addon linki gir" kismina yapistir.');
 });
