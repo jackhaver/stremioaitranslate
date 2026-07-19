@@ -52,7 +52,12 @@ if (GEMINI_API_KEY) {
 }
 
 // ---- Gemini cevirisi (Google AI Studio REST API) ----
-async function translateBatchWithGemini(texts) {
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function callGeminiOnce(texts) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
 
   const prompt = `Asagida bir film/dizi altyazisindan alinmis, JSON dizisi (array) halinde Ingilizce metin parcalari var. ` +
@@ -78,7 +83,9 @@ async function translateBatchWithGemini(texts) {
 
   if (!res.ok) {
     const errText = await res.text();
-    throw new Error(`Gemini API hatasi (${res.status}): ${errText.slice(0, 300)}`);
+    const err = new Error(`Gemini API hatasi (${res.status}): ${errText.slice(0, 300)}`);
+    err.status = res.status;
+    throw err;
   }
 
   const data = await res.json();
@@ -97,6 +104,26 @@ async function translateBatchWithGemini(texts) {
   }
 
   return translated;
+}
+
+async function translateBatchWithGemini(texts, maxRetries = 5) {
+  let lastErr;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await callGeminiOnce(texts);
+    } catch (err) {
+      lastErr = err;
+      const isQuotaError = err.status === 429 || /quota|rate.?limit/i.test(err.message);
+      if (isQuotaError && attempt < maxRetries) {
+        const waitMs = 8000 * (attempt + 1); // 8s, 16s, 24s, 32s, 40s
+        console.log(`[trsubs] gemini kota limiti, ${waitMs / 1000}sn bekleyip tekrar deniyorum (deneme ${attempt + 1}/${maxRetries})`);
+        await sleep(waitMs);
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastErr;
 }
 
 // ---- Manifest ----
@@ -142,6 +169,12 @@ async function translateSrt(srtText, engine) {
     const batch = texts.slice(i, i + BATCH);
     const results = await engine.translateBatch(batch);
     results.forEach(t => translated.push(t));
+
+    // Gemini ucretsiz katmaninin dakikalik istek limitine takilmamak icin
+    // ardisik istekler arasinda kucuk bir bekleme birakiyoruz
+    if (engine.key === 'gemini' && i + BATCH < texts.length) {
+      await sleep(4000);
+    }
   }
 
   cueNodes.forEach((n, idx) => {
