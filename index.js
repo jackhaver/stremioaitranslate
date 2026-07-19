@@ -9,129 +9,25 @@ const deepl = require('deepl-node');
 const { parseSync, stringifySync } = require('subtitle');
 
 const DEEPL_API_KEY = process.env.DEEPL_API_KEY;
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-flash-latest';
 const PORT = process.env.PORT || 7000;
 const PUBLIC_URL = process.env.PUBLIC_URL || `http://127.0.0.1:${PORT}`;
 const CACHE_DIR = path.join(__dirname, 'cache');
 
-if (!DEEPL_API_KEY && !GEMINI_API_KEY) {
-  console.error('HATA: DEEPL_API_KEY veya GEMINI_API_KEY tanimli degil. En az birini .env dosyasina ya da Render "Environment" ayarlarina eklemelisin.');
+if (!DEEPL_API_KEY) {
+  console.error('HATA: DEEPL_API_KEY ortam degiskeni tanimli degil. .env dosyasina veya Render "Environment" ayarlarina ekleyin.');
   process.exit(1);
 }
 
 if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR);
 
-const deeplTranslator = DEEPL_API_KEY ? new deepl.Translator(DEEPL_API_KEY) : null;
-
-// ---- Cevirilebilir motorlar ----
-// Her motorun: key (dosya adi ve id icin), label (Stremio listesinde gorunecek isim), translateBatch(texts) fonksiyonu var
-const ENGINES = [];
-
-if (deeplTranslator) {
-  ENGINES.push({
-    key: 'deepl',
-    label: 'Türkçe (DeepL)',
-    translateBatch: async (texts) => {
-      const results = await deeplTranslator.translateText(texts, 'en', 'tr', {
-        tagHandling: 'html'
-      });
-      return results.map(r => r.text);
-    },
-    batchSize: 50
-  });
-}
-
-if (GEMINI_API_KEY) {
-  ENGINES.push({
-    key: 'gemini',
-    label: 'Türkçe (Gemini AI)',
-    translateBatch: async (texts) => translateBatchWithGemini(texts),
-    batchSize: 40
-  });
-}
-
-// ---- Gemini cevirisi (Google AI Studio REST API) ----
-
-function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-async function callGeminiOnce(texts) {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
-
-  const prompt = `Asagida bir film/dizi altyazisindan alinmis, JSON dizisi (array) halinde Ingilizce metin parcalari var. ` +
-    `Her elemani dogal, akici Turkceye cevir. Kurallar:\n` +
-    `- Cikti SADECE ayni uzunlukta bir JSON string dizisi olmali, baska hicbir metin ekleme\n` +
-    `- Sira kesinlikle korunmali (index 0 -> index 0)\n` +
-    `- HTML etiketlerini (<i>, <b> gibi) oldugu gibi koru\n` +
-    `- Argo, deyim ve kufurleri de dogal Turkce karsiliklariyla cevir, sansurleme\n` +
-    `- Her elemani bagimsiz cumle gibi degil, altyazi baglaminda cevir\n\n` +
-    `JSON dizisi:\n${JSON.stringify(texts)}`;
-
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: {
-        responseMimeType: 'application/json',
-        temperature: 0.3
-      }
-    })
-  });
-
-  if (!res.ok) {
-    const errText = await res.text();
-    const err = new Error(`Gemini API hatasi (${res.status}): ${errText.slice(0, 300)}`);
-    err.status = res.status;
-    throw err;
-  }
-
-  const data = await res.json();
-  const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!rawText) throw new Error('Gemini API bos yanit dondurdu');
-
-  let translated;
-  try {
-    translated = JSON.parse(rawText);
-  } catch (e) {
-    throw new Error('Gemini API yaniti JSON olarak parse edilemedi');
-  }
-
-  if (!Array.isArray(translated) || translated.length !== texts.length) {
-    throw new Error(`Gemini API beklenmeyen bicimde yanit verdi (beklenen: ${texts.length}, gelen: ${translated?.length})`);
-  }
-
-  return translated;
-}
-
-async function translateBatchWithGemini(texts, maxRetries = 5) {
-  let lastErr;
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    try {
-      return await callGeminiOnce(texts);
-    } catch (err) {
-      lastErr = err;
-      const isQuotaError = err.status === 429 || /quota|rate.?limit/i.test(err.message);
-      if (isQuotaError && attempt < maxRetries) {
-        const waitMs = 8000 * (attempt + 1); // 8s, 16s, 24s, 32s, 40s
-        console.log(`[trsubs] gemini kota limiti, ${waitMs / 1000}sn bekleyip tekrar deniyorum (deneme ${attempt + 1}/${maxRetries})`);
-        await sleep(waitMs);
-        continue;
-      }
-      throw err;
-    }
-  }
-  throw lastErr;
-}
+const translator = new deepl.Translator(DEEPL_API_KEY);
 
 // ---- Manifest ----
 const manifest = {
-  id: 'org.stremio.trsubs.multi',
-  version: '2.0.0',
-  name: 'TR Altyazi (AI Ceviri)',
-  description: 'Ingilizce altyaziyi DeepL ve/veya Gemini yapay zekasi ile otomatik olarak Turkceye cevirir',
+  id: 'org.stremio.trsubs.deepl',
+  version: '1.0.0',
+  name: 'TR Altyazi (DeepL AI)',
+  description: 'Ingilizce altyaziyi DeepL yapay zekasi ile otomatik olarak Turkceye cevirir',
   logo: `${PUBLIC_URL}/logo.png`,
   resources: ['subtitles'],
   types: ['movie', 'series'],
@@ -154,38 +50,35 @@ async function fetchEnglishSubtitleUrl(type, id) {
   return english[0].url;
 }
 
-function cacheKeyFor(srtUrl, engineKey) {
-  return crypto.createHash('sha256').update(srtUrl).digest('hex') + `.${engineKey}.tr.srt`;
+function cacheKeyFor(srtUrl) {
+  return crypto.createHash('sha256').update(srtUrl).digest('hex') + '.tr.srt';
 }
 
-async function translateSrt(srtText, engine) {
+async function translateSrt(srtText) {
   const nodes = parseSync(srtText);
   const cueNodes = nodes.filter(n => n.type === 'cue');
   const texts = cueNodes.map(n => n.data.text);
 
-  const BATCH = engine.batchSize || 40;
+  // DeepL: bir istekte en fazla 50 metin gonderilebilir
+  const BATCH = 50;
   const translated = [];
   for (let i = 0; i < texts.length; i += BATCH) {
     const batch = texts.slice(i, i + BATCH);
-    const results = await engine.translateBatch(batch);
-    results.forEach(t => translated.push(t));
-
-    // Gemini ucretsiz katmaninin dakikalik istek limitine takilmamak icin
-    // ardisik istekler arasinda kucuk bir bekleme birakiyoruz
-    if (engine.key === 'gemini' && i + BATCH < texts.length) {
-      await sleep(4000);
-    }
+    const results = await translator.translateText(batch, 'en', 'tr', {
+      tagHandling: 'html' // altyazidaki <i>, <b> gibi taglari korur
+    });
+    results.forEach(r => translated.push(r.text));
   }
 
   cueNodes.forEach((n, idx) => {
-    n.data.text = translated[idx] ?? n.data.text;
+    n.data.text = translated[idx];
   });
 
   return stringifySync(nodes, { format: 'SRT' });
 }
 
-async function getOrCreateTranslatedSubtitle(srtUrl, engine) {
-  const fileName = cacheKeyFor(srtUrl, engine.key);
+async function getOrCreateTranslatedSubtitle(srtUrl) {
+  const fileName = cacheKeyFor(srtUrl);
   const filePath = path.join(CACHE_DIR, fileName);
 
   if (fs.existsSync(filePath)) {
@@ -196,7 +89,7 @@ async function getOrCreateTranslatedSubtitle(srtUrl, engine) {
   if (!res.ok) throw new Error(`Altyazi indirilemedi: ${res.status}`);
   const srtText = await res.text();
 
-  const translatedSrt = await translateSrt(srtText, engine);
+  const translatedSrt = await translateSrt(srtText);
   fs.writeFileSync(filePath, translatedSrt, 'utf8');
 
   return `${PUBLIC_URL}/subs/${fileName}`;
@@ -212,23 +105,17 @@ builder.defineSubtitlesHandler(async ({ type, id }) => {
       return { subtitles: [] };
     }
 
-    const subtitles = [];
+    const translatedUrl = await getOrCreateTranslatedSubtitle(englishSrtUrl);
 
-    // Her motor icin ayri ayri dene, biri hata verirse digerini engellemesin
-    for (const engine of ENGINES) {
-      try {
-        const translatedUrl = await getOrCreateTranslatedSubtitle(englishSrtUrl, engine);
-        subtitles.push({
-          id: `trsubs-${engine.key}`,
+    return {
+      subtitles: [
+        {
+          id: 'trsubs-deepl',
           url: translatedUrl,
-          lang: engine.label
-        });
-      } catch (err) {
-        console.error(`[trsubs] ${engine.key} motoru hata verdi:`, err.message);
-      }
-    }
-
-    return { subtitles };
+          lang: 'tur'
+        }
+      ]
+    };
   } catch (err) {
     console.error('[trsubs] Hata:', err.message);
     return { subtitles: [] };
@@ -244,7 +131,5 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 app.listen(PORT, () => {
   console.log(`Addon calisiyor: ${PUBLIC_URL}/manifest.json`);
-  console.log(`Aktif ceviri motorlari: ${ENGINES.map(e => e.key).join(', ') || 'YOK - key eklenmemis'}`);
-  if (GEMINI_API_KEY) console.log(`Kullanilan Gemini modeli: ${GEMINI_MODEL}`);
   console.log('Bu adresi Stremio > Addonlar > "Addon linki gir" kismina yapistir.');
 });
